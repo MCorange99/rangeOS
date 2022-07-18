@@ -1,5 +1,5 @@
 # rangeOS
-
+An os in rust because i was bored
 ## setup
 
 ### For x86_64 linux  
