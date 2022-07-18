@@ -7,14 +7,18 @@
 #![feature(abi_x86_interrupt)]
 
 use core::panic::PanicInfo;
+
 pub mod serial;
 pub mod vga_buffer;
 pub mod interrupts;
+pub mod gdt;
 
 pub fn init() {
+    gdt::init();
     interrupts::init_idt();
+    unsafe { interrupts::PICS.lock().initialize() };
+    x86_64::instructions::interrupts::enable();
 }
-
 
 
 
@@ -62,16 +66,26 @@ pub fn test_panic_handler(info: &PanicInfo) -> ! {
     serial_println!("[failed]\n");
     serial_println!("Error: {}\n", info);
     exit_qemu(QemuExitCode::Failed);
-    loop {}
+    hlt_loop();  
 }
 
-/// Entry point for `cargo test`
+
+pub fn hlt_loop() -> ! {
+    loop {
+        x86_64::instructions::hlt();
+    }
+}
+
+
+/**
+ * Tests
+ */
 #[cfg(test)]
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
 	init(); 
     test_main();
-    loop {}
+    hlt_loop();  
 }
 
 #[cfg(test)]

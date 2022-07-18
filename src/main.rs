@@ -16,16 +16,14 @@ mod serial;
 // this function is the entry point, since the linker looks for a function
 // named `_start` by default
 pub extern "C" fn _start() -> ! {
+    use rangeos::print;
     println!("About fucking time{}", "!");
     rangeos::init();
-
-    // invoke a breakpoint exception
-    x86_64::instructions::interrupts::int3();
+    
     #[cfg(test)]
     test_main();
     
-    loop {}
-
+    rangeos::hlt_loop();  
 }
 
 /// This function is called on panic.
@@ -33,7 +31,7 @@ pub extern "C" fn _start() -> ! {
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     println!("{}", info);
-    loop {}
+    rangeos::hlt_loop();  
 }
 
 #[cfg(test)]
