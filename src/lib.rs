@@ -1,95 +1,78 @@
+#![feature(lang_items)]
+#![feature(ptr_internals)]
 #![no_std]
 
-#![cfg_attr(test, no_main)]
-#![feature(custom_test_frameworks)]
-#![test_runner(crate::test_runner)]
-#![reexport_test_harness_main = "test_main"]
-#![feature(abi_x86_interrupt)]
+// Extern crates
+#[macro_use]
+extern crate bitflags;
+extern crate spin;
+extern crate rlibc;
+extern crate volatile;
+extern crate multiboot2;
 
+// normal use's
 use core::panic::PanicInfo;
 
-pub mod serial;
-pub mod vga_buffer;
-pub mod interrupts;
-pub mod gdt;
-
-pub fn init() {
-    gdt::init();
-    interrupts::init_idt();
-    unsafe { interrupts::PICS.lock().initialize() };
-    x86_64::instructions::interrupts::enable();
-}
+// Local modules
+#[macro_use] 
+mod vga_buff;
+mod memory;
 
 
-
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum QemuExitCode {
-    Success = 0x10,
-    Failed = 0x11,
-}
-
-pub fn exit_qemu(exit_code: QemuExitCode) {
-    use x86_64::instructions::port::Port;
-
-    unsafe {
-        let mut port = Port::new(0xf4);
-        port.write(exit_code as u32);
-    }
-}
-
-pub trait Testable {
-    fn run(&self) -> ();
-}
-
-impl<T> Testable for T
-where
-    T: Fn(),
-{
-    fn run(&self) {
-        serial_print!("{}...\t", core::any::type_name::<T>());
-        self();
-        serial_println!("[ok]");
-    }
-}
-
-pub fn test_runner(tests: &[&dyn Testable]) {
-    serial_println!("Running {} tests", tests.len());
-    for test in tests {
-        test.run();
-    }
-    exit_qemu(QemuExitCode::Success);
-}
-
-pub fn test_panic_handler(info: &PanicInfo) -> ! {
-    serial_println!("[failed]\n");
-    serial_println!("Error: {}\n", info);
-    exit_qemu(QemuExitCode::Failed);
-    hlt_loop();  
-}
-
-
-pub fn hlt_loop() -> ! {
-    loop {
-        x86_64::instructions::hlt();
-    }
-}
-
-
-/**
- * Tests
- */
-#[cfg(test)]
 #[no_mangle]
-pub extern "C" fn _start() -> ! {
-	init(); 
-    test_main();
-    hlt_loop();  
+pub extern fn rust_main(mb_info_ptr: usize) {
+    use memory::FrameAllocator;
+
+    vga_buff::clear_screen();
+    println!("Hello World{}", "!");
+
+    let boot_info = unsafe{ multiboot2::load(mb_info_ptr) };
+    let memory_map_tag = boot_info.memory_map_tag()
+        .expect("Memory map tag required");
+
+    println!("memory areas:");
+    for area in memory_map_tag.memory_areas() {
+        println!("    start: 0x{:x}, length: 0x{:x}",
+            area.base_addr, area.length);
+    }
+
+    let elf_sections_tag = boot_info.elf_sections_tag()
+        .expect("Elf-sections tag required");
+
+    println!("kernel sections:");
+    for section in elf_sections_tag.sections() {
+        println!("    addr: 0x{:x}, size: 0x{:x}, flags: 0x{:x}",
+            section.addr, section.size, section.flags);
+    }
+
+    let kernel_start = elf_sections_tag.sections().map(|s| s.addr)
+        .min().unwrap();
+    let kernel_end = elf_sections_tag.sections().map(|s| s.addr + s.size)
+        .max().unwrap();
+    let multiboot_start = mb_info_ptr;
+    let multiboot_end = multiboot_start + (boot_info.total_size as usize);
+
+    let mut frame_allocator = memory::AreaFrameAllocator::new(
+        kernel_start as usize, kernel_end as usize, multiboot_start,
+        multiboot_end, memory_map_tag.memory_areas());
+
+    for i in 0.. {
+        if let None = frame_allocator.allocate_frame() {
+            println!("allocated {} frames", i);
+            break;
+        }
+    }
+
+    loop{}
 }
 
-#[cfg(test)]
+#[lang = "eh_personality"]
+#[no_mangle] 
+pub extern fn eh_personality() {
+
+}
+#[no_mangle]
 #[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    test_panic_handler(info)
+pub extern fn panic(_s: &PanicInfo) -> ! {
+    loop{}
 }

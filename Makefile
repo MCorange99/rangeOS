@@ -1,19 +1,49 @@
+arch ?= x86_64
+kernel := build/kernel-$(arch).bin
+iso := build/os-$(arch).iso
 
-all: build.linux
+target ?= $(arch)-range_os
+rust_os := target/$(target)/debug/librange_os.a
 
-build.linux:
-	cargo build 
-	cargo bootimage
+linker_script := src/arch/$(arch)/linker.ld
+grub_cfg := src/arch/$(arch)/grub.cfg
+assembly_source_files := $(wildcard src/arch/$(arch)/*.asm)
+assembly_object_files := $(patsubst src/arch/$(arch)/%.asm, \
+	build/arch/$(arch)/%.o, $(assembly_source_files))
 
-build.linux.release:
-	cargo build 
-	cargo bootimage
+.PHONY: all clean run iso kernel
 
-run.linux: build.linux
-	qemu-system-x86_64 -drive format=raw,file=target/x86_64-rangeos/debug/bootimage-rangeos.bin
-
-run.linux.release: build.linux.release
-	qemu-system-x86_64 -drive format=raw,file=target/x86_64-rangeos/release/bootimage-rangeos.bin
+all: $(kernel)
 
 clean:
-	rm -rf ./target
+	@echo "INFO: Cleaning project directory."
+	@rm -rf build
+	# @cargo clean
+
+run: $(iso)
+	echo "INFO: Running rangeos with 'quemu'"
+	@qemu-system-x86_64 -cdrom $(iso)
+
+iso: $(iso)
+
+kernel:
+	@RUST_TARGET_PATH=$(shell pwd) xargo build --target $(target)
+
+$(iso): $(kernel) $(grub_cfg)
+	@echo "INFO: Making ISO"
+	@mkdir -p build/isofiles/boot/grub
+	@cp $(kernel) build/isofiles/boot/kernel.bin
+	@cp $(grub_cfg) build/isofiles/boot/grub
+	@grub-mkrescue -o $(iso) build/isofiles 2> /dev/null
+	@rm -r build/isofiles
+
+$(kernel): kernel $(rust_os) $(assembly_object_files) $(linker_script)
+	@echo "INFO: Linking kernel"
+	@ld -n --gc-sections -T $(linker_script) -o $(kernel) \
+		$(assembly_object_files) $(rust_os)
+
+# compile assembly files
+build/arch/$(arch)/%.o: src/arch/$(arch)/%.asm
+	@echo "INFO: compiling $<"
+	@mkdir -p $(shell dirname $@)
+	@nasm -felf64 $< -o $@
